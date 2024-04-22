@@ -163,7 +163,7 @@ void process_func(Graph *graph, int pid)
         available.insert(i);
     }
 
-    set<int> buffer;
+    set<int> unavailable;
 
     while (true)
     {
@@ -194,13 +194,13 @@ void process_func(Graph *graph, int pid)
             int myColour = colour[pid];
             for (auto i : graph->adj[pid])
             {
-                // I will change the colour only if my colour is in the buffer, and I want to change it only if my pid is higher.
-                // So whenever equal, if the neighbour's pid is higher, only then I will add to buffer.
+                // I will change the colour only if my colour is in the unavailable, and I want to change it only if my pid is higher.
+                // So whenever equal, if the neighbour's pid is higher, only then I will add to unavailable.
                 if (myColour == colour[i])
                 {
                     if (i > pid)
                     {
-                        buffer.insert(colour[i]);
+                        unavailable.insert(colour[i]);
                         available.erase(colour[i]);
                     }
                 }
@@ -208,12 +208,12 @@ void process_func(Graph *graph, int pid)
                 else
                 {
                     available.erase(colour[i]);
-                    buffer.insert(colour[i]);
+                    unavailable.insert(colour[i]);
                 }
             }
 
             // We only change the colour if it is necessary, because we might have sent the colour to neighbours, forcing to colour more
-            if (buffer.find(myColour) != buffer.end())
+            if (unavailable.find(myColour) != unavailable.end())
             {
                 colour[pid] = *available.begin();
             }
