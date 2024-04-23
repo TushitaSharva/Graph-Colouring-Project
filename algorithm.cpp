@@ -40,7 +40,7 @@
 using namespace std;
 
 /* Global variables */
-int n;       // Number of nodes along with the master node
+int n; // Number of nodes along with the master node
 mutex file_lock;
 mutex colour_lock;
 
@@ -166,23 +166,23 @@ void master_func(int *colour)
     print("sent CHECK", colour);
 
     // Now it will wait for someone to send ACK that the consistent colourign has been observed.
-    int *recv_msg2 = (int *)malloc(sizeof(int) * size - 1);
+    int *recv_msg = (int *)malloc(sizeof(int) * n);
     MPI_Status status;
-    MPI_Recv(recv_msg2, n, MPI_INT, MPI::ANY_SOURCE, ACK, MPI_COMM_WORLD, &status);
+    MPI_Recv(recv_msg, n, MPI_INT, MPI::ANY_SOURCE, ACK, MPI_COMM_WORLD, &status);
 
     print("recieved ACK, sending FINISH", colour);
 
     // Given it is done, it will send to all the nodes FINISH and also the set of colours decided.
     for (int i = 1; i < n; i++)
     {
-        MPI_Send(recv_msg2, n, MPI_INT, i, FINISH, MPI_COMM_WORLD);
+        MPI_Send(recv_msg, n, MPI_INT, i, FINISH, MPI_COMM_WORLD);
     }
 
     print("Returning", colour);
     return;
 }
 
-void process_func(Graph *graph, int *colour,int pid)
+void process_func(Graph *graph, int *colour, int pid)
 {
     bool check = false;
     set<int> available;
@@ -216,81 +216,74 @@ void process_func(Graph *graph, int *colour,int pid)
 
         else if (tag == CHECK)
         {
-            print("recieved check message", colour);
+            print("recieved CHECK message", colour);
             check = true;
         }
 
         else if (tag == COLOUR)
         {
-            // From the message recieved, check all the colours of this neighbour
+            print("recieved COLOUR message", colour);
+            // From the message recieved, I will update all the colours first, and also checking simultaneously my neighbour's colours
             int myColour = colour[pid];
-            for (int i = 1; i < graph->adj[pid].size(); i++)
-            {
-                int neighbour = graph->adj[pid][i];
-                // I will change the colour only if my colour is in the unavailable, and I want to change it only if my pid is higher.
-                // So whenever equal, if the neighbour's pid is higher, only then I will add to unavailable.
-                if (myColour == colour[neighbour])
-                {
-                    if (i > pid)
-                    {
-                        unavailable.insert(colour[i]);
-                        available.erase(colour[i]);
-                    }
-                }
+            bool should_change = ((myColour == 0) ? true : false);
+            vector<int> neighbours = graph->adj[pid];
 
-                else
-                {
-                    available.erase(colour[i]);
-                    unavailable.insert(colour[i]);
-                }
-
-                colour[neighbour] = recv_msg[neighbour];
-            }
-
-            // We only change the colour if it is necessary, because we might have sent the colour to neighbours, forcing to colour more
-            if (myColour == 0) // If it was uncoloured till now
-            {
-                colour[pid] = *available.begin();
-                print("Coloured just now, sending COLOUR to 0, my new colour is " + to_string(colour[pid]), colour);
-                MPI_Send(colour, n, MPI_INT, 0, COLOUR, MPI_COMM_WORLD);
-            }
-
-            else if (unavailable.find(myColour) != unavailable.end())
-            {
-                colour[pid] = *available.begin();
-            }
-
-            // If necessary colour wouldve been changed, else remain the same.
-            // Updating colours for all except the neighbours : This part should not affect the current colour these are not direct neighbours
             for (int i = 1; i < n; i++)
             {
-                if (find(graph->adj[pid].begin(), graph->adj[pid].end(), i) != graph->adj[pid].end())
+                if (recv_msg[i] != 0)
                 {
                     colour[i] = recv_msg[i];
+                    if (find(neighbours.begin(), neighbours.end(), i) != neighbours.end())
+                    {
+                        if (myColour == colour[i] && i > pid)
+                        {
+                            should_change = true;
+                        }
+
+                        available.erase(colour[i]);
+                        unavailable.insert(colour[i]);
+                        std::cout << *available.begin();
+                    }
                 }
+            }
+
+            if (myColour == 0)
+            {
+                colour[pid] = *available.begin();
+                print("Sending MASTER the COLOUR message", colour);
+                MPI_Send(colour, n, MPI_INT, MASTER, COLOUR, MPI_COMM_WORLD);
+            }
+
+            else if (should_change == true)
+            {
+                colour[pid] = *available.begin();
             }
 
             if (check == true)
             {
-                if (check_graph_consistency(graph, colour))
+                if (check_graph_consistency(graph, colour) == true)
                 {
-                    print("Sending ACK to the master", colour);
-                    MPI_Send(colour, n, MPI_INT, 0, ACK, MPI_COMM_WORLD);
+                    print("Sending ACK TO MASTER", colour);
+                    MPI_Send(colour, n, MPI_INT, MASTER, ACK, MPI_COMM_WORLD);
                 }
             }
 
-            for (int i = 1; i < graph->adj[pid].size(); i++)
+            else
             {
-                print("Sending COLOUR to " + to_string(graph->adj[pid][i]), colour);
-                MPI_Send(colour, n, MPI_INT, graph->adj[pid][i], COLOUR, MPI_COMM_WORLD);
+                for (int i = 1; i < neighbours.size(); i++)
+                {
+                    MPI_Send(colour, n, MPI_INT, neighbours[i], COLOUR, MPI_COMM_WORLD);
+                }
             }
 
-            for(auto i: unavailable)
+            for (auto i : unavailable)
             {
-                unavailable.erase(i);
                 available.insert(i);
+                unavailable.erase(i);
             }
         }
+
+        print("My colours before I am recieving anything:", colour);
     }
     print("Exiting", colour);
     return;
