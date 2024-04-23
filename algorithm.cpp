@@ -42,6 +42,8 @@ using namespace std;
 /* Global variables */
 int n;       // Number of nodes along with the master node
 int *colour; // Colour of each node as far as this process knows
+mutex file_lock;
+mutex colour_lock;
 
 class Graph
 {
@@ -56,6 +58,37 @@ public:
         adj.resize(size);
     }
 };
+
+void print(string str)
+{
+    file_lock.lock();
+    int pid;
+    MPI_Comm_rank(MPI_COMM_WORLD, &pid);
+
+    int size;
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    time_t current = time(0);
+    struct tm *timeinfo = localtime(&current);
+    char buffer[80];
+    strftime(buffer, sizeof(buffer), "%H:%M:%S", timeinfo);
+    std::string timeString(buffer);
+
+    string filename = "proc_MK" + to_string(pid) + ".log";
+    ofstream outfile(filename, ios::app);
+
+    outfile << "[" << timeString << "]"
+            << " Process " << pid << " " << str << " [" << colour[0];
+
+    for (int i = 1; i < size; i++)
+    {
+        outfile << ", " << colour[i];
+    }
+    outfile << "]\n";
+
+    outfile.close();
+    file_lock.unlock();
+}
 
 void getGraph(Graph *graph)
 {
@@ -87,17 +120,6 @@ void getGraph(Graph *graph)
             graph->edges.insert(make_pair(u, graph->adj[i][j]));
         }
     }
-
-    /*
-        for(int i = 0; i < n; i++)
-        {
-            for(int j = 0; j < graph->adj[i].size(); j++)
-            {
-                std::cout << graph->adj[i][j] << " ";
-            }
-            std::cout << "\n";
-        }
-    */
 }
 
 bool check_graph_consistency(Graph *graph, int *colours)
@@ -120,12 +142,12 @@ void master_func()
 
     int coloured_nodes = 0;
 
-    int *recv_msg = (int *)malloc(sizeof(int) * n);
-
     while (true)
     {
         MPI_Status status;
+        int *recv_msg = (int *)malloc(sizeof(int) * n);
         MPI_Recv(recv_msg, n, MPI_INT, MPI::ANY_SOURCE, COLOUR, MPI_COMM_WORLD, &status);
+        print("recieved COLOUR message from " + to_string(status.MPI_SOURCE));
 
         coloured_nodes++;
         if (coloured_nodes == n - 1) // from 1 to total size
@@ -134,23 +156,30 @@ void master_func()
         }
     }
 
+    print("recieved all the COLOUR messages, sending CHECK");
+
     // It will send CHECK message to nodes saying, everyone has been coloured atleast once, and now you can check the consistency
     for (int i = 1; i < n; i++)
     {
-        MPI_Send(recv_msg, n, MPI_INT, i, CHECK, MPI_COMM_WORLD);
+        MPI_Send(colour, n, MPI_INT, i, CHECK, MPI_COMM_WORLD);
     }
 
+    print("sent CHECK");
+
     // Now it will wait for someone to send ACK that the consistent colourign has been observed.
-    int *recv_msg = (int *)malloc(sizeof(int) * size - 1);
+    int *recv_msg2 = (int *)malloc(sizeof(int) * size - 1);
     MPI_Status status;
-    MPI_Recv(recv_msg, n, MPI_INT, MPI::ANY_SOURCE, ACK, MPI_COMM_WORLD, &status);
+    MPI_Recv(recv_msg2, n, MPI_INT, MPI::ANY_SOURCE, ACK, MPI_COMM_WORLD, &status);
+
+    print("recieved ACK, sending FINISH");
 
     // Given it is done, it will send to all the nodes FINISH and also the set of colours decided.
     for (int i = 1; i < n; i++)
     {
-        MPI_Send(recv_msg, n, MPI_INT, i, FINISH, MPI_COMM_WORLD);
+        MPI_Send(recv_msg2, n, MPI_INT, i, FINISH, MPI_COMM_WORLD);
     }
 
+    print("Returning");
     return;
 }
 
@@ -172,19 +201,23 @@ void process_func(Graph *graph, int pid)
         MPI_Recv(recv_msg, n, MPI_INT, MPI::ANY_SOURCE, MPI::ANY_TAG, MPI_COMM_WORLD, &status);
 
         int tag = status.MPI_TAG;
+        int sender = status.MPI_SOURCE;
 
         if (tag == FINISH)
         {
+            print("recieved FINISH message");
             for (int i = 0; i < n; i++)
             {
                 colour[i] = recv_msg[i];
             }
 
+            print("finishing with colours:");
             break;
         }
 
         else if (tag == CHECK)
         {
+            print("recieved check message");
             check = true;
         }
 
@@ -192,7 +225,7 @@ void process_func(Graph *graph, int pid)
         {
             // From the message recieved, check all the colours of this neighbour
             int myColour = colour[pid];
-            for (auto i : graph->adj[pid])
+            for (int i = 1; i < graph->adj[pid].size(); i++)
             {
                 // I will change the colour only if my colour is in the unavailable, and I want to change it only if my pid is higher.
                 // So whenever equal, if the neighbour's pid is higher, only then I will add to unavailable.
@@ -210,55 +243,50 @@ void process_func(Graph *graph, int pid)
                     available.erase(colour[i]);
                     unavailable.insert(colour[i]);
                 }
+
+                colour[i] = recv_msg[i];
             }
 
             // We only change the colour if it is necessary, because we might have sent the colour to neighbours, forcing to colour more
-            if (unavailable.find(myColour) != unavailable.end())
+            if (myColour == 0) // If it was uncoloured till now
             {
                 colour[pid] = *available.begin();
-            }
-
-            else if (myColour == 0) // If it was uncoloured till now
-            {
-                colour[pid] = *available.begin();
+                print("Coloured just now, sending COLOUR to 0, my new colour is " + to_string(colour[pid]));
                 MPI_Send(colour, n, MPI_INT, 0, COLOUR, MPI_COMM_WORLD);
             }
 
-            // If necessary colour wouldve been changed, else remain the same.
-
-            // Updating colours for all except the neighbours : This part should not affect the current colour these are not direct neighbours
-            for(int i = 1; i < n; i++)
+            else if (unavailable.find(myColour) != unavailable.end())
             {
-                if(find(graph->adj[pid].begin(), graph->adj[pid].end(), i) != graph->adj[pid].end())
+                colour[pid] = *available.begin();
+            }
+
+            // If necessary colour wouldve been changed, else remain the same.
+            // Updating colours for all except the neighbours : This part should not affect the current colour these are not direct neighbours
+            for (int i = 1; i < n; i++)
+            {
+                if (find(graph->adj[pid].begin(), graph->adj[pid].end(), i) != graph->adj[pid].end())
                 {
                     colour[i] = recv_msg[i];
                 }
             }
 
-            if(check == true)
+            if (check == true)
             {
-                if(check_graph_consistency(graph, colour))
+                if (check_graph_consistency(graph, colour))
                 {
+                    print("Sending ACK to the master");
                     MPI_Send(colour, n, MPI_INT, 0, ACK, MPI_COMM_WORLD);
                 }
             }
 
-            for(int i = 1; i < graph->adj[pid].size(); i++)
+            for (int i = 1; i < graph->adj[pid].size(); i++)
             {
-                MPI_Send(colour, n, MPI_INT, 0, COLOUR, MPI_COMM_WORLD);
+                print("Sending colour to " + to_string(graph->adj[pid][i]));
+                MPI_Send(colour, n, MPI_INT, graph->adj[pid][i], COLOUR, MPI_COMM_WORLD);
             }
         }
-        // recv_msg is basically the colour as seen by the sending process.
-        /*
-            Things to do if TAG == COLOUR:
-            If uncoloured, it should colour itself and send to neighbours + master
-            If coloured, check the compatibility from the neighbour's colours
-                If incompatible + sender has smaller pid: change to least available among the neighbours
-                If incomaptible + sender has greater pid: donot change
-            Among non neighbours, if sender sends any new colours update colours according to me
-            Send this message to all my neighbours, and if no incompatibility, check for the colours of entire graph. If consistent, send ACK to master
-        */
     }
+    print("Exiting");
     return;
 }
 
@@ -293,7 +321,7 @@ int main(int argc, char *argv[])
         if (pid == 1)
         {
             colour[pid] = 1;
-            MPI_Send(NULL, 1, MPI_INT, 0, COLOUR, MPI_COMM_WORLD);
+            MPI_Send(colour, 1, MPI_INT, 0, COLOUR, MPI_COMM_WORLD);
 
             vector<int> neighbours = graph->adj[pid];
             for (int i = 0; i < neighbours.size(); i++)
@@ -311,6 +339,6 @@ int main(int argc, char *argv[])
     }
     std::cout << "\n";
 
-    MPI_Finalize;
+    MPI_Finalize();
     return 0;
 }
