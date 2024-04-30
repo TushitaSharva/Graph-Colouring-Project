@@ -42,7 +42,6 @@ using namespace std;
 /* Global variables */
 int n; // Number of nodes along with the master node
 mutex file_lock;
-mutex debug_lock;
 mutex colour_lock;
 int *colour;
 
@@ -89,37 +88,6 @@ void print(string str, int *colour)
 
     outfile.close();
     file_lock.unlock();
-}
-
-void debug(string str)
-{
-    debug_lock.lock();
-    int pid;
-    MPI_Comm_rank(MPI_COMM_WORLD, &pid);
-
-    int size;
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-
-    time_t current = time(0);
-    struct tm *timeinfo = localtime(&current);
-    char buffer[80];
-    strftime(buffer, sizeof(buffer), "%H:%M:%S", timeinfo);
-    std::string timeString(buffer);
-
-    string filename = "proc_debug_MK" + to_string(pid) + ".log";
-    ofstream outfile(filename, ios::app);
-
-    outfile << "[" << timeString << "]"
-            << " Process " << pid << " " << str << " [" << colour[0];
-
-    for (int i = 1; i < size; i++)
-    {
-        outfile << ", " << colour[i];
-    }
-    outfile << "]\n";
-
-    outfile.close();
-    debug_lock.unlock();
 }
 
 void getGraph(Graph *graph)
@@ -193,12 +161,6 @@ void master_func()
     // It will send CHECK message to nodes saying, everyone has been coloured atleast once, and now you can check the consistency
     for (int i = 1; i < n; i++)
     {
-        std::cout << "Here\n";
-        for (int i = 0; i < n; i++)
-        {
-            std::cout << colour[i] << " ";
-        }
-        std::cout << "\n";
         MPI_Send(colour, n, MPI_INT, i, CHECK, MPI_COMM_WORLD);
     }
 
@@ -229,8 +191,6 @@ void master_func()
 
 void process_func(Graph *graph, int pid)
 {
-    debug("In process_func");
-
     bool check = false;
     set<int> available;
     for (int i = 1; i < n; i++)
@@ -242,8 +202,6 @@ void process_func(Graph *graph, int pid)
 
     while (true)
     {
-        debug("In process_func loop");
-
         int *recv_msg = new int[n];
         MPI_Status status;
         print(to_string(pid) + " waiting for message", colour);
@@ -252,12 +210,8 @@ void process_func(Graph *graph, int pid)
         int tag = status.MPI_TAG;
         int sender = status.MPI_SOURCE;
 
-        debug("Recieved from " + to_string(sender));
-
         if (tag == FINISH)
         {
-            debug("Recieved finish message from " + to_string(sender));
-
             print("recieved FINISH message", colour);
             for (int i = 0; i < n; i++)
             {
@@ -270,21 +224,17 @@ void process_func(Graph *graph, int pid)
 
         else if (tag == CHECK)
         {
-            debug("Recieved check from " + to_string(sender));
             print("recieved CHECK message", colour);
             check = true;
         }
 
         else if (tag == COLOUR)
         {
-            debug("Recieved colour from " + to_string(sender));
             print("recieved COLOUR message", colour);
             // From the message recieved, I will update all the colours first, and also checking simultaneously my neighbour's colours
             int myColour = colour[pid];
             bool should_change = ((myColour == 0) ? true : false);
             vector<int> neighbours = graph->adj[pid];
-
-            debug("should change: " + to_string(should_change));
 
             for (int i = 1; i < n; i++)
             {
@@ -293,25 +243,19 @@ void process_func(Graph *graph, int pid)
                     colour[i] = recv_msg[i]; // If not 0, update colour[i] to recieved message
                     if (find(neighbours.begin(), neighbours.end(), i) != neighbours.end())
                     {
-                        debug("Checking if " + to_string(i) +" is my neighbour");
                         if (myColour == colour[i] && i > pid)
                         {
-                            debug("I should change my colour");
                             should_change = true;
                         }
 
-                        debug("here (1)");
                         available.erase(colour[i]);
-                        debug("here (2)");
                         unavailable.insert(colour[i]);
-                        debug("here (3)");
                     }
                 }
             }
 
             if (myColour == 0)
             {
-                debug("Sending MASTER the colour message");
                 colour[pid] = *available.begin();
                 print("Sending MASTER the COLOUR message", colour);
                 MPI_Send(colour, n, MPI_INT, MASTER, COLOUR, MPI_COMM_WORLD);
@@ -319,28 +263,23 @@ void process_func(Graph *graph, int pid)
 
             else if (should_change == true)
             {
-                debug("Changing my colour");
                 colour[pid] = *available.begin();
             }
 
             if (check == true)
-            {
-                debug("Checking graph consistency");
+            {;
                 if (check_graph_consistency(graph, colour) == true)
                 {
-                    debug("Consistent");
                     print("Sending ACK TO MASTER", colour);
                     MPI_Send(colour, n, MPI_INT, MASTER, ACK, MPI_COMM_WORLD);
                 }
             }
 
-            debug("Sending to all neighbours my current colour array");
             for (int i = 1; i < neighbours.size(); i++)
             {
                 MPI_Send(colour, n, MPI_INT, neighbours[i], COLOUR, MPI_COMM_WORLD);
             }
 
-            debug("Replenishing available set for next iteration");
             for (auto i : unavailable)
             {
                 available.insert(i);
