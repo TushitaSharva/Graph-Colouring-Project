@@ -370,6 +370,7 @@ int main(int argc, char *argv[])
 
     ofstream complexity("complexity_w.txt", ios::app);
     complexity << message_complexity << " ";
+    complexity.close();
 
     MPI_Finalize();
     return 0;

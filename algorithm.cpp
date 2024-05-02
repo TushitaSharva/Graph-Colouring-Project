@@ -44,6 +44,7 @@ int n; // Number of nodes along with the master node
 mutex file_lock;
 mutex colour_lock;
 int *colour;
+int message_complexity;
 
 class Graph
 {
@@ -148,6 +149,7 @@ void master_func()
         int *recv_msg = (int *)malloc(sizeof(int) * n);
         MPI_Recv(recv_msg, n, MPI_INT, MPI::ANY_SOURCE, COLOUR, MPI_COMM_WORLD, &status);
         print("recieved COLOUR message from " + to_string(status.MPI_SOURCE), colour);
+        message_complexity++;
 
         coloured_nodes++;
         if (coloured_nodes == n - 1) // from 1 to total size
@@ -170,6 +172,7 @@ void master_func()
     int *recv_msg = (int *)malloc(sizeof(int) * n);
     MPI_Status status;
     MPI_Recv(recv_msg, n, MPI_INT, MPI::ANY_SOURCE, ACK, MPI_COMM_WORLD, &status);
+    message_complexity++;
 
     // Update it's colours
     for(int i = 0; i < n; i++)
@@ -206,6 +209,7 @@ void process_func(Graph *graph, int pid)
         MPI_Status status;
         print(to_string(pid) + " waiting for message", colour);
         MPI_Recv(recv_msg, n, MPI_INT, MPI::ANY_SOURCE, MPI::ANY_TAG, MPI_COMM_WORLD, &status);
+        message_complexity++;
 
         int tag = status.MPI_TAG;
         int sender = status.MPI_SOURCE;
@@ -343,5 +347,10 @@ int main(int argc, char *argv[])
     std::cout << "\n";
 
     MPI_Finalize();
+
+    ofstream complexity("complexity_a.txt", ios::app);
+    complexity << message_complexity << " ";
+    complexity.close();
+
     return 0;
 }
