@@ -7,6 +7,7 @@ first_number=$(head -n 1 "$input_file" | awk '{print $1}')
 
 rm proc*
 rm complexity*
+rm time*
 
 # Compile the C++ code with mpic++
 mpic++ algorithm.cpp -g -o a.exe

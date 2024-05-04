@@ -300,9 +300,6 @@ void process_func(Graph *graph, int pid)
             }
             unavailable.clear();
         }
-
-        // delete[] recv_msg;
-        print("My colours before I am recieving anything:", colour);
     }
     print("Exiting", colour);
     return;
@@ -332,6 +329,7 @@ int main(int argc, char *argv[])
     int my_partition = pid / num_partitions;
     int num_procs_per_partition = size / num_partitions;
     my_range_start = my_partition * num_procs_per_partition;
+    
     if(my_partition == num_partitions)
     {
         my_range_end = size -1;
@@ -357,7 +355,10 @@ int main(int argc, char *argv[])
             vector<int> neighbours = graph->adj[pid];
             for (int i = 1; i < neighbours.size(); i++)
             {
-                MPI_Send(colour, n, MPI_INT, neighbours[i], COLOUR, MPI_COMM_WORLD);
+                if(i >= my_range_start && i <= my_range_end)
+                {
+                    MPI_Send(colour, n, MPI_INT, neighbours[i], COLOUR, MPI_COMM_WORLD);
+                }
             }
         }
 

@@ -311,6 +311,8 @@ int main(int argc, char *argv[])
         colour[i] = 0;
     }
 
+    auto t_start = chrono::high_resolution_clock::now();
+
     // The array colour represents the knowledge of this process regarding the colour of nodes
 
     int pid, size;
@@ -347,6 +349,11 @@ int main(int argc, char *argv[])
     std::cout << "\n";
 
     MPI_Finalize();
+
+    auto t_end = chrono::high_resolution_clock::now();
+    ofstream time_complexity("time_a.txt", ios::app);
+    time_complexity << chrono::duration<double, milli>(t_end - t_start).count() << " ";
+    time_complexity.close();
 
     ofstream complexity("complexity_a.txt", ios::app);
     complexity << message_complexity << " ";
