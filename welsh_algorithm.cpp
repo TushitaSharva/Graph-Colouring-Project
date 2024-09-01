@@ -371,7 +371,7 @@ int main(int argc, char *argv[])
     std::cout << "\n";
 
     auto t_end = chrono::high_resolution_clock::now();
-    ofstream time_complexity("time_a.txt", ios::app);
+    ofstream time_complexity("time_w.txt", ios::app);
     time_complexity << chrono::duration<double, milli>(t_end - t_start).count() << " ";
     time_complexity.close();
 
